@@ -107,3 +107,25 @@ test('countColors sorts by count desc', () => {
   const r = B.countColors(Int16Array.from([3, 1, 1, -1, 1, 3, 2]));
   assert.deepStrictEqual(r, [{ index: 1, count: 3 }, { index: 3, count: 2 }, { index: 2, count: 1 }]);
 });
+
+// ---- Final review fixes ----
+test('pixelate upscales small images without holes', () => {
+  const d = img(16, 16, () => [200, 30, 40, 255]);
+  const { indices } = B.pixelate(d, 16, 16, 50, 50, B.PALETTE);
+  assert.ok(indices.every(i => i === idx('P05')), 'every cell should be red');
+});
+
+test('gridSize keeps proportions when height hits the cap', () => {
+  assert.deepStrictEqual(B.gridSize(500, 3000, 120), { w: 33, h: 200 });
+  assert.deepStrictEqual(B.gridSize(10, 5000, 50), { w: 1, h: 200 });
+});
+
+test('pixelate reuses color matches across calls', () => {
+  const W = 1600, H = 1200, d = new Uint8ClampedArray(W * H * 4);
+  for (let i = 0; i < d.length; i++) d[i] = i % 4 === 3 ? 255 : Math.random() * 256; // hits all 32768 buckets
+  B.pixelate(d, W, H, 60, 45, B.PALETTE);                 // warm up
+  const t = performance.now();
+  B.pixelate(d, W, H, 61, 46, B.PALETTE);                 // different width, same palette
+  const ms = performance.now() - t;
+  assert.ok(ms < 100, `second call took ${ms.toFixed(0)} ms`);
+});

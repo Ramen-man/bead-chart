@@ -110,52 +110,68 @@ function nearest(lab, palette, allowed) {
 const MAX_H = 200;
 
 // Grid size for a given width in beads; height follows the image's aspect ratio.
+// If the height would pass MAX_H, the width shrinks too so proportions are kept.
 function gridSize(imgW, imgH, beadsWide) {
-  const h = Math.min(MAX_H, Math.max(1, Math.round((imgH / imgW) * beadsWide)));
-  return { w: beadsWide, h };
+  let w = beadsWide, h = Math.max(1, Math.round((imgH / imgW) * w));
+  if (h > MAX_H) { h = MAX_H; w = Math.max(1, Math.round((MAX_H * imgW) / imgH)); }
+  return { w, h };
 }
 
-// Every opaque source pixel votes for its nearest bead color; each cell takes
-// the winner (ties: lower palette index). Majority vote keeps outlines crisp
-// instead of averaging edge cells into muddy in-between colors.
+// Source pixel range [start, end) for each of n cells across `size` pixels.
+// Always at least one pixel, so enlarging a small image leaves no holes.
+function cellRanges(size, n) {
+  const start = new Int32Array(n), end = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    start[i] = Math.min(size - 1, Math.floor((i * size) / n));
+    end[i] = Math.max(start[i] + 1, Math.min(size, Math.ceil(((i + 1) * size) / n)));
+  }
+  return { start, end };
+}
+
+// Nearest-color lookup per 5-bit-per-channel bucket, kept per palette so it
+// is built once and reused across re-renders (it doesn't depend on the grid).
+const bucketMemos = new WeakMap();
+function bucketMemo(palette) {
+  let m = bucketMemos.get(palette);
+  if (!m) bucketMemos.set(palette, (m = new Int16Array(32768).fill(-1)));
+  return m;
+}
+
+// Every opaque source pixel in a cell votes for its nearest bead color; the
+// cell takes the winner (ties: lower palette index). Majority vote keeps
+// outlines crisp instead of averaging edge cells into muddy in-between colors.
 // Returns, row-major over w*h:
 //   indices: palette index per cell, -1 = empty (under half the pixels opaque)
 //   cells:   mean RGB of the winning pixels (null when empty), used to remap later
 function pixelate(rgba, imgW, imgH, w, h, palette) {
-  const n = w * h, P = palette.length;
-  const votes = new Uint32Array(n * P), sums = new Float64Array(n * P * 3);
-  const total = new Uint32Array(n);
-  const memo = new Int16Array(32768).fill(-1);   // 5 bits per channel -> palette index
-  const colOf = new Int32Array(imgW);
-  for (let x = 0; x < imgW; x++) colOf[x] = Math.min(w - 1, Math.floor((x * w) / imgW));
-  for (let y = 0; y < imgH; y++) {
-    const rowBase = Math.min(h - 1, Math.floor((y * h) / imgH)) * w;
-    let p = y * imgW * 4;
-    for (let x = 0; x < imgW; x++, p += 4) {
-      const c = rowBase + colOf[x];
-      total[c]++;
-      if (rgba[p + 3] < 128) continue;
-      const r = rgba[p], g = rgba[p + 1], b = rgba[p + 2];
-      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-      let k = memo[key];
-      if (k < 0) k = memo[key] = nearest(rgbToLab([r | 4, g | 4, b | 4]), palette); // bucket center
-      const v = c * P + k;
-      votes[v]++;
-      sums[v * 3] += r; sums[v * 3 + 1] += g; sums[v * 3 + 2] += b;
+  const P = palette.length, memo = bucketMemo(palette);
+  const cols = cellRanges(imgW, w), rows = cellRanges(imgH, h);
+  const votes = new Uint32Array(P), sums = new Float64Array(P * 3);
+  const indices = new Int16Array(w * h), cells = new Array(w * h);
+  for (let cy = 0; cy < h; cy++) {
+    for (let cx = 0; cx < w; cx++) {
+      votes.fill(0); sums.fill(0);
+      let opaque = 0;
+      const x0 = cols.start[cx], x1 = cols.end[cx], y0 = rows.start[cy], y1 = rows.end[cy];
+      for (let y = y0; y < y1; y++) {
+        for (let p = (y * imgW + x0) * 4, pe = (y * imgW + x1) * 4; p < pe; p += 4) {
+          if (rgba[p + 3] < 128) continue;
+          const r = rgba[p], g = rgba[p + 1], b = rgba[p + 2];
+          const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+          let k = memo[key];
+          if (k < 0) k = memo[key] = nearest(rgbToLab([(r & ~7) | 4, (g & ~7) | 4, (b & ~7) | 4]), palette); // bucket center
+          votes[k]++; opaque++;
+          sums[k * 3] += r; sums[k * 3 + 1] += g; sums[k * 3 + 2] += b;
+        }
+      }
+      const c = cy * w + cx;
+      let best = -1, bestVotes = 0;
+      for (let k = 0; k < P; k++) if (votes[k] > bestVotes) { bestVotes = votes[k]; best = k; }
+      if (best < 0 || opaque * 2 < (x1 - x0) * (y1 - y0)) { indices[c] = -1; cells[c] = null; continue; }
+      indices[c] = best;
+      cells[c] = [Math.round(sums[best * 3] / bestVotes), Math.round(sums[best * 3 + 1] / bestVotes),
+        Math.round(sums[best * 3 + 2] / bestVotes)];
     }
-  }
-  const indices = new Int16Array(n), cells = new Array(n);
-  for (let c = 0; c < n; c++) {
-    let best = -1, bestVotes = 0, opaque = 0;
-    for (let k = 0; k < P; k++) {
-      const v = votes[c * P + k];
-      opaque += v;
-      if (v > bestVotes) { bestVotes = v; best = k; }
-    }
-    if (best < 0 || opaque * 2 < total[c]) { indices[c] = -1; cells[c] = null; continue; }
-    const s = (c * P + best) * 3;
-    indices[c] = best;
-    cells[c] = [Math.round(sums[s] / bestVotes), Math.round(sums[s + 1] / bestVotes), Math.round(sums[s + 2] / bestVotes)];
   }
   return { indices, cells };
 }

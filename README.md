@@ -11,3 +11,13 @@ closest bead color from a basic 29-color palette (CIEDE2000 color matching).
 
 Palette lives in `PALETTE_RAW` in `beads.js`; hex values are approximate
 (real beads vary by batch). Tests: `npm test`.
+
+## Releasing an update
+Bump `VERSION` in `sw.js` on every change, or installed phones keep the old copy.
+Files are cached as one set, so a phone never mixes old and new files.
+
+## Browser tests
+Need Playwright and a Chromium build:
+`python3 -m http.server 8765 &` then
+`CH=<chrome path> node test/browser/e2e.js <path to playwright>` and
+`CH=<chrome path> node test/browser/sw-update.js <path to playwright>`.

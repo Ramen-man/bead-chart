@@ -24,8 +24,11 @@ has no beads yet, so colors must come from a small basic set every brand sells.
 - **Input:** file picker, drag-and-drop, paste.
 - **Controls:** width in beads (height follows aspect ratio), max colors,
   view toggle (bead preview / chart).
-- **Resize:** average all source pixels in each cell (box filter). Cells that are
-  mostly transparent → empty (no bead).
+- **Resize:** every source pixel in a cell votes for its nearest bead color and the
+  cell takes the majority (changed from averaging during build: averaging turned
+  outline edges into muddy brown/grey). Cells under half opaque → empty (no bead).
+  Small images are enlarged without holes. If height would pass 200, width
+  shrinks too so proportions are kept.
 - **Color match:** convert to CIELAB, pick the nearest palette color by CIEDE2000.
 - **Color limit:** if more colors are used than the max, repeatedly drop the
   least-used color and remap its cells to their nearest remaining color.

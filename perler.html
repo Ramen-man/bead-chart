@@ -136,19 +136,35 @@
   }
 
   $('file').addEventListener('change', e => loadFile(e.target.files[0]));
-  $('width').addEventListener('input', render);
-  $('colors').addEventListener('input', render);
+  // Dragging a slider fires many input events; render at most once per frame.
+  let queued = false;
+  const scheduleRender = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; render(); });
+  };
+  $('width').addEventListener('input', scheduleRender);
+  $('colors').addEventListener('input', scheduleRender);
   $('vChart').onclick = () => setView('chart');
   $('vPreview').onclick = () => setView('preview');
   $('out').onclick = () => $('out').classList.toggle('zoom');
+  let lastSaveUrl = null;
   $('save').onclick = () => {
-    $('out').toBlob(b => {
+    const name = `bead-${state.view}-${state.size.w}x${state.size.h}.png`;
+    $('out').toBlob(async b => {
+      if (!b) { alert('Could not create the image. Try a smaller width.'); return; }
+      const file = new File([b], name, { type: 'image/png' });
+      // iPhone: the share sheet offers "Save Image" to Photos
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file] }); return; }
+        catch (e) { if (e.name === 'AbortError') return; }
+      }
+      if (lastSaveUrl) URL.revokeObjectURL(lastSaveUrl);   // keep the URL alive until the next save
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(b);
-      a.download = `bead-${state.view}-${state.size.w}x${state.size.h}.png`;
+      a.href = lastSaveUrl = URL.createObjectURL(b);
+      a.download = name;
       a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    });
+    }, 'image/png');
   };
   $('print').onclick = () => { if (state.view !== 'chart') setView('chart'); window.print(); };
 
