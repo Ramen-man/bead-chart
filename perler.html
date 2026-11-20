@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bead Chart Maker</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bead Chart">
+<meta name="theme-color" content="#d23c3c">
 <style>
   :root {
     --bg: #faf8f5; --panel: #ffffff; --text: #1d1b19; --muted: #6f6a64;
@@ -155,6 +160,10 @@
     const item = [...e.clipboardData.items].find(i => i.type.startsWith('image/'));
     if (item) loadFile(item.getAsFile());
   });
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 
   const q = new URLSearchParams(location.search);
   if (q.has('demo')) {
