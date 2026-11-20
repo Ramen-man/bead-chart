@@ -36,6 +36,7 @@ function img(w, h, fn) {
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) d.set(fn(x, y), (y * w + x) * 4);
   return d;
 }
+const toIdx = cells => Int16Array.from(cells, c => (c ? B.nearest(B.rgbToLab(c), B.PALETTE) : -1));
 const idx = code => B.PALETTE.findIndex(p => p.code === code);
 
 test('gridSize keeps aspect ratio', () => {
@@ -47,16 +48,25 @@ test('gridSize clamps height to 1..200', () => {
   assert.strictEqual(B.gridSize(5000, 10, 50).h, 1);
 });
 
-test('pixelate box-averages each cell', () => {
-  const d = img(4, 4, x => (x < 2 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
-  assert.deepStrictEqual(B.pixelate(d, 4, 4, 2, 1), [[255, 0, 0], [0, 0, 255]]);
+test('pixelate gives each cell its bead color', () => {
+  const d = img(4, 4, x => (x < 2 ? [200, 30, 40, 255] : [40, 60, 140, 255]));
+  const { cells, indices } = B.pixelate(d, 4, 4, 2, 1, B.PALETTE);
+  assert.deepStrictEqual(cells, [[200, 30, 40], [40, 60, 140]]);
+  assert.deepStrictEqual(Array.from(indices), [idx('P05'), idx('P08')]);
+});
+
+test('pixelate picks the majority bead color, not a muddy average', () => {
+  const black = [20, 20, 20, 255], orange = [240, 150, 40, 255];
+  const mostlyBlack = img(4, 1, x => (x < 3 ? black : orange));
+  const mostlyOrange = img(4, 1, x => (x < 1 ? black : orange));
+  assert.strictEqual(B.pixelate(mostlyBlack, 4, 1, 1, 1, B.PALETTE).indices[0], idx('P18'));
+  assert.strictEqual(B.pixelate(mostlyOrange, 4, 1, 1, 1, B.PALETTE).indices[0], idx('P57'));
 });
 
 test('transparent cells are empty', () => {
   const d = img(4, 2, x => (x < 2 ? [0, 0, 0, 0] : [0, 0, 0, 255]));
-  const cells = B.pixelate(d, 4, 2, 2, 1);
+  const { cells, indices: ind } = B.pixelate(d, 4, 2, 2, 1, B.PALETTE);
   assert.strictEqual(cells[0], null);
-  const ind = B.mapToPalette(cells, B.PALETTE);
   assert.strictEqual(ind[0], -1);
   assert.strictEqual(ind[1], idx('P18'));
   assert.deepStrictEqual(B.countColors(ind), [{ index: idx('P18'), count: 1 }]);
@@ -65,17 +75,17 @@ test('transparent cells are empty', () => {
 test('pixelate handles large input', () => {
   const W = 4000, H = 3000, d = new Uint8ClampedArray(W * H * 4).fill(200);
   const t = performance.now();
-  const cells = B.pixelate(d, W, H, 60, 45);
+  const { cells } = B.pixelate(d, W, H, 60, 45, B.PALETTE);
   assert.ok(performance.now() - t < 500, 'too slow');
   assert.strictEqual(cells.length, 60 * 45);
 });
 
 test('limitColors no-op when under the cap', () => {
   const cells = [[0, 0, 0], [0, 0, 0], [240, 240, 240]];
-  const ind = B.mapToPalette(cells, B.PALETTE);
+  const ind = toIdx(cells);
   assert.deepStrictEqual(Array.from(B.limitColors(ind, cells, B.PALETTE, 5)), Array.from(ind));
   const one = [[0, 0, 0]];
-  const ind1 = B.mapToPalette(one, B.PALETTE);
+  const ind1 = toIdx(one);
   assert.deepStrictEqual(Array.from(B.limitColors(ind1, one, B.PALETTE, 2)), Array.from(ind1));
 });
 
@@ -83,7 +93,7 @@ test('limitColors drops rarest color and remaps to nearest remaining', () => {
   // 3 red, 3 blue, 1 green (maps to P10); green must go to whichever is nearer
   const red = [200, 30, 40], blue = [40, 60, 140], green = [30, 120, 60];
   const cells = [red, red, red, blue, blue, blue, green];
-  const ind = B.mapToPalette(cells, B.PALETTE);
+  const ind = toIdx(cells);
   const out = B.limitColors(ind, cells, B.PALETTE, 2);
   const used = new Set(out);
   assert.strictEqual(used.size, 2);

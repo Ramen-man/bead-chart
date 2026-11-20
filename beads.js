@@ -115,44 +115,49 @@ function gridSize(imgW, imgH, beadsWide) {
   return { w: beadsWide, h };
 }
 
-// Box-average every source pixel into its cell (one pass, alpha-weighted).
-// Returns w*h cells, row-major; null = mostly transparent (no bead).
-function pixelate(rgba, imgW, imgH, w, h) {
-  const n = w * h;
-  const sr = new Float64Array(n), sg = new Float64Array(n), sb = new Float64Array(n);
-  const sa = new Float64Array(n), cnt = new Uint32Array(n);
+// Every opaque source pixel votes for its nearest bead color; each cell takes
+// the winner (ties: lower palette index). Majority vote keeps outlines crisp
+// instead of averaging edge cells into muddy in-between colors.
+// Returns, row-major over w*h:
+//   indices: palette index per cell, -1 = empty (under half the pixels opaque)
+//   cells:   mean RGB of the winning pixels (null when empty), used to remap later
+function pixelate(rgba, imgW, imgH, w, h, palette) {
+  const n = w * h, P = palette.length;
+  const votes = new Uint32Array(n * P), sums = new Float64Array(n * P * 3);
+  const total = new Uint32Array(n);
+  const memo = new Int16Array(32768).fill(-1);   // 5 bits per channel -> palette index
   const colOf = new Int32Array(imgW);
   for (let x = 0; x < imgW; x++) colOf[x] = Math.min(w - 1, Math.floor((x * w) / imgW));
   for (let y = 0; y < imgH; y++) {
     const rowBase = Math.min(h - 1, Math.floor((y * h) / imgH)) * w;
     let p = y * imgW * 4;
     for (let x = 0; x < imgW; x++, p += 4) {
-      const c = rowBase + colOf[x], a = rgba[p + 3];
-      sr[c] += rgba[p] * a; sg[c] += rgba[p + 1] * a; sb[c] += rgba[p + 2] * a;
-      sa[c] += a; cnt[c]++;
+      const c = rowBase + colOf[x];
+      total[c]++;
+      if (rgba[p + 3] < 128) continue;
+      const r = rgba[p], g = rgba[p + 1], b = rgba[p + 2];
+      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      let k = memo[key];
+      if (k < 0) k = memo[key] = nearest(rgbToLab([r | 4, g | 4, b | 4]), palette); // bucket center
+      const v = c * P + k;
+      votes[v]++;
+      sums[v * 3] += r; sums[v * 3 + 1] += g; sums[v * 3 + 2] += b;
     }
   }
-  const cells = new Array(n);
+  const indices = new Int16Array(n), cells = new Array(n);
   for (let c = 0; c < n; c++) {
-    if (cnt[c] === 0 || sa[c] / cnt[c] < 128) { cells[c] = null; continue; }
-    cells[c] = [Math.round(sr[c] / sa[c]), Math.round(sg[c] / sa[c]), Math.round(sb[c] / sa[c])];
+    let best = -1, bestVotes = 0, opaque = 0;
+    for (let k = 0; k < P; k++) {
+      const v = votes[c * P + k];
+      opaque += v;
+      if (v > bestVotes) { bestVotes = v; best = k; }
+    }
+    if (best < 0 || opaque * 2 < total[c]) { indices[c] = -1; cells[c] = null; continue; }
+    const s = (c * P + best) * 3;
+    indices[c] = best;
+    cells[c] = [Math.round(sums[s] / bestVotes), Math.round(sums[s + 1] / bestVotes), Math.round(sums[s + 2] / bestVotes)];
   }
-  return cells;
-}
-
-// Palette index per cell; -1 = empty. Identical colors are matched once.
-function mapToPalette(cells, palette) {
-  const out = new Int16Array(cells.length);
-  const memo = new Map();
-  for (let i = 0; i < cells.length; i++) {
-    const c = cells[i];
-    if (!c) { out[i] = -1; continue; }
-    const key = (c[0] << 16) | (c[1] << 8) | c[2];
-    let k = memo.get(key);
-    if (k === undefined) { k = nearest(rgbToLab(c), palette); memo.set(key, k); }
-    out[i] = k;
-  }
-  return out;
+  return { indices, cells };
 }
 
 // [{index, count}] for used colors, most used first (ties: lower index first).
@@ -182,6 +187,6 @@ function limitColors(indices, cells, palette, maxColors) {
 if (typeof module !== 'undefined') {
   module.exports = {
     PALETTE, hexToRgb, rgbToLab, deltaE2000, nearest,
-    gridSize, pixelate, mapToPalette, countColors, limitColors,
+    gridSize, pixelate, countColors, limitColors,
   };
 }

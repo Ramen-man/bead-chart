@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bead Chart Maker</title>
+<style>
+  :root {
+    --bg: #faf8f5; --panel: #ffffff; --text: #1d1b19; --muted: #6f6a64;
+    --line: #e4dfd8; --accent: #d23c3c; --accent-text: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #171615; --panel: #22201e; --text: #eeeae5; --muted: #a39d96; --line: #3a3633; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  #drop { display: block; text-align: center; padding: 22px 12px; border: 2px dashed var(--line);
+          border-radius: 12px; cursor: pointer; color: var(--muted); }
+  #drop.over { border-color: var(--accent); color: var(--text); }
+  #drop strong { color: var(--text); }
+  #file { display: none; }
+  .controls { display: grid; gap: 12px; margin-top: 14px; grid-template-columns: 1fr 1fr; }
+  .controls label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  .controls output { color: var(--text); font-weight: 600; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; grid-column: 1 / -1; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #stage { margin-top: 14px; overflow: auto; max-height: 80vh; border-radius: 12px;
+           border: 1px solid var(--line); background: #fff; display: none; }
+  #stage.show { display: block; }
+  #out { display: block; width: 100%; height: auto; cursor: zoom-in; }
+  #out.zoom { width: auto; max-width: none; cursor: zoom-out; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 2px 0; }
+  @media (max-width: 520px) { .controls { grid-template-columns: 1fr; } }
+  @media print {
+    body { background: #fff; }
+    main > *:not(#stage) { display: none !important; }
+    #stage { border: 0; max-height: none; overflow: visible; }
+    #out, #out.zoom { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bead Chart Maker</h1>
+  <div class="panel">
+    <label id="drop" for="file">
+      <strong>Choose an image</strong>, drop one here, or paste
+      <input id="file" type="file" accept="image/*">
+    </label>
+    <div class="controls">
+      <label>Width (beads) <output id="wOut">50</output>
+        <input id="width" type="range" min="10" max="120" value="50">
+      </label>
+      <label>Max colors <output id="cOut">12</output>
+        <input id="colors" type="range" min="2" max="29" value="12">
+      </label>
+      <div class="row">
+        <button id="vChart" class="on">Chart</button>
+        <button id="vPreview">Bead preview</button>
+        <button id="save" disabled>Save PNG</button>
+        <button id="print" disabled>Print</button>
+      </div>
+    </div>
+  </div>
+  <div id="stage"><canvas id="out"></canvas></div>
+  <p class="hint" id="hint">Tap the chart to zoom. Images stay on your device.</p>
+</main>
+
+<script src="beads.js"></script>
+<script src="chart.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const MAX_SRC = 1600;                     // downscale big photos before processing
+  const state = { src: null, view: 'chart', cells: null, size: null, cellsKey: '', indices: null };
+
+  function loadImage(url) {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, MAX_SRC / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      state.src = { data: c.getContext('2d').getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height };
+      state.cellsKey = '';
+      $('stage').classList.add('show');
+      $('save').disabled = $('print').disabled = false;
+      render();
+      if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+    };
+    img.onerror = () => alert('Could not read that image.');
+    img.src = url;
+  }
+
+  function loadFile(file) {
+    if (file && file.type.startsWith('image/')) loadImage(URL.createObjectURL(file));
+  }
+
+  function render() {
+    if (!state.src) return;
+    const beadsWide = +$('width').value, maxColors = +$('colors').value;
+    $('wOut').value = beadsWide; $('cOut').value = maxColors;
+    const key = String(beadsWide);
+    if (state.cellsKey !== key) {           // pixelating is the slow part; redo only on width change
+      state.size = gridSize(state.src.w, state.src.h, beadsWide);
+      const px = pixelate(state.src.data, state.src.w, state.src.h, state.size.w, state.size.h, PALETTE);
+      state.cells = px.cells;
+      state.base = px.indices;
+      state.cellsKey = key;
+    }
+    state.indices = limitColors(state.base, state.cells, PALETTE, maxColors);
+    const { w, h } = state.size;
+    if (state.view === 'chart') drawChart($('out'), state.indices, w, h, PALETTE);
+    else drawPreview($('out'), state.indices, w, h, PALETTE);
+  }
+
+  function setView(v) {
+    state.view = v;
+    $('vChart').classList.toggle('on', v === 'chart');
+    $('vPreview').classList.toggle('on', v === 'preview');
+    render();
+  }
+
+  $('file').addEventListener('change', e => loadFile(e.target.files[0]));
+  $('width').addEventListener('input', render);
+  $('colors').addEventListener('input', render);
+  $('vChart').onclick = () => setView('chart');
+  $('vPreview').onclick = () => setView('preview');
+  $('out').onclick = () => $('out').classList.toggle('zoom');
+  $('save').onclick = () => {
+    $('out').toBlob(b => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = `bead-${state.view}-${state.size.w}x${state.size.h}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+  };
+  $('print').onclick = () => { if (state.view !== 'chart') setView('chart'); window.print(); };
+
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  document.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+  document.addEventListener('paste', e => {
+    const item = [...e.clipboardData.items].find(i => i.type.startsWith('image/'));
+    if (item) loadFile(item.getAsFile());
+  });
+
+  const q = new URLSearchParams(location.search);
+  if (q.has('demo')) {
+    if (q.get('view') === 'preview') setView('preview');
+    loadImage('test/sample.png');
+  }
+})();
+</script>
+</body>
+</html>
