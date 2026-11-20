@@ -107,6 +107,81 @@ function nearest(lab, palette, allowed) {
   return best;
 }
 
+const MAX_H = 200;
+
+// Grid size for a given width in beads; height follows the image's aspect ratio.
+function gridSize(imgW, imgH, beadsWide) {
+  const h = Math.min(MAX_H, Math.max(1, Math.round((imgH / imgW) * beadsWide)));
+  return { w: beadsWide, h };
+}
+
+// Box-average every source pixel into its cell (one pass, alpha-weighted).
+// Returns w*h cells, row-major; null = mostly transparent (no bead).
+function pixelate(rgba, imgW, imgH, w, h) {
+  const n = w * h;
+  const sr = new Float64Array(n), sg = new Float64Array(n), sb = new Float64Array(n);
+  const sa = new Float64Array(n), cnt = new Uint32Array(n);
+  const colOf = new Int32Array(imgW);
+  for (let x = 0; x < imgW; x++) colOf[x] = Math.min(w - 1, Math.floor((x * w) / imgW));
+  for (let y = 0; y < imgH; y++) {
+    const rowBase = Math.min(h - 1, Math.floor((y * h) / imgH)) * w;
+    let p = y * imgW * 4;
+    for (let x = 0; x < imgW; x++, p += 4) {
+      const c = rowBase + colOf[x], a = rgba[p + 3];
+      sr[c] += rgba[p] * a; sg[c] += rgba[p + 1] * a; sb[c] += rgba[p + 2] * a;
+      sa[c] += a; cnt[c]++;
+    }
+  }
+  const cells = new Array(n);
+  for (let c = 0; c < n; c++) {
+    if (cnt[c] === 0 || sa[c] / cnt[c] < 128) { cells[c] = null; continue; }
+    cells[c] = [Math.round(sr[c] / sa[c]), Math.round(sg[c] / sa[c]), Math.round(sb[c] / sa[c])];
+  }
+  return cells;
+}
+
+// Palette index per cell; -1 = empty. Identical colors are matched once.
+function mapToPalette(cells, palette) {
+  const out = new Int16Array(cells.length);
+  const memo = new Map();
+  for (let i = 0; i < cells.length; i++) {
+    const c = cells[i];
+    if (!c) { out[i] = -1; continue; }
+    const key = (c[0] << 16) | (c[1] << 8) | c[2];
+    let k = memo.get(key);
+    if (k === undefined) { k = nearest(rgbToLab(c), palette); memo.set(key, k); }
+    out[i] = k;
+  }
+  return out;
+}
+
+// [{index, count}] for used colors, most used first (ties: lower index first).
+function countColors(indices) {
+  const m = new Map();
+  for (const i of indices) if (i >= 0) m.set(i, (m.get(i) || 0) + 1);
+  return [...m].map(([index, count]) => ({ index, count }))
+    .sort((a, b) => b.count - a.count || a.index - b.index);
+}
+
+// Reduce to at most maxColors: repeatedly drop the least-used color and move
+// its cells to their nearest remaining color (judged on the cell's original RGB).
+function limitColors(indices, cells, palette, maxColors) {
+  const out = Int16Array.from(indices);
+  let counts = countColors(out);
+  while (counts.length > maxColors) {
+    const drop = counts[counts.length - 1].index;
+    const remaining = counts.slice(0, -1).map(c => c.index).sort((a, b) => a - b);
+    for (let i = 0; i < out.length; i++) {
+      if (out[i] === drop) out[i] = nearest(rgbToLab(cells[i]), palette, remaining);
+    }
+    counts = countColors(out);
+  }
+  return out;
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { PALETTE, hexToRgb, rgbToLab, deltaE2000, nearest };
+  module.exports = {
+    PALETTE, hexToRgb, rgbToLab, deltaE2000, nearest,
+    gridSize, pixelate, mapToPalette, countColors, limitColors,
+  };
 }
