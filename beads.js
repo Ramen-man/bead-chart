@@ -9,6 +9,7 @@ const PALETTE_RAW = [
   ['P57', 'Cheddar', '#F1AA0C'],
   ['P04', 'Orange', '#ED6120'],
   ['P05', 'Red', '#BF2633'],
+  ['P59', 'Hot Coral', '#FF3956'],
   ['P20', 'Rust', '#8C3A24'],
   ['P33', 'Peach', '#EEBAB2'],
   ['P06', 'Bubblegum', '#DD6698'],

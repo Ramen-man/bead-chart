@@ -19,6 +19,7 @@ test('nearest picks obvious bead colors', () => {
   assert.strictEqual(code([250, 250, 250]), 'P01');
   assert.strictEqual(code([0, 0, 0]), 'P18');
   assert.strictEqual(code([220, 30, 30]), 'P05');
+  assert.strictEqual(code([255, 40, 40]), 'P59');    // bright red -> Hot Coral (was Orange before P59)
 });
 
 test('palette codes unique and hex well-formed', () => {

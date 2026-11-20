@@ -2,7 +2,7 @@
 // served from that set only, so the page never mixes old and new files.
 // To release an update: change VERSION. The browser notices the new sw.js,
 // downloads the full new set, then swaps it in.
-const VERSION = 'beads-v2';
+const VERSION = 'beads-v3';
 const FILES = ['./', 'index.html', 'perler.html', 'beads.js', 'chart.js',
                'manifest.json', 'icon-192.png', 'icon-512.png'];
 
